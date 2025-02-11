@@ -29,6 +29,8 @@ LV_IMG_DECLARE(icon_air_off)
 static ui_dev_type_t g_active_dev_type = UI_DEV_LIGHT;
 static lv_obj_t *g_func_btn[4] = {NULL};
 static void (*g_dev_ctrl_end_cb)(void) = NULL;
+static lv_obj_t *g_fan_popup = NULL;
+static lv_obj_t *g_fan_mask = NULL;  // 透明遮罩
 
 typedef struct {
     ui_dev_type_t type;
@@ -61,6 +63,109 @@ void ui_dev_ctrl_set_state(ui_dev_type_t type, bool state)
     ui_release();
 }
 
+static void close_fan_popup(void)
+{
+    if (g_fan_popup) {
+        lv_obj_del(g_fan_popup);  // 删除弹窗会自动删除其所有子对象
+        g_fan_popup = NULL;
+        g_fan_mask = NULL;  // 弹窗是mask的子对象，所以mask也会被自动删除
+    }
+}
+
+static void fan_power_btn_event_cb(lv_event_t *e)
+{
+    lv_obj_t *btn = lv_event_get_target(e);
+    bool is_checked = lv_obj_has_state(btn, LV_STATE_CHECKED);
+    app_fan_set_power(is_checked);
+}
+
+static void fan_slider_event_cb(lv_event_t *e)
+{
+    lv_obj_t *slider = lv_event_get_target(e);
+    int32_t value = lv_slider_get_value(slider);
+    app_fan_set_speed((fan_speed_t)value);
+}
+
+static void show_fan_speed_popup(lv_obj_t *parent)
+{
+    if (g_fan_popup) {
+        close_fan_popup();
+        return;
+    }
+
+    // 创建一个透明的全屏遮罩作为弹窗的容器
+    g_fan_mask = lv_obj_create(parent);
+    lv_obj_remove_style_all(g_fan_mask);
+    lv_obj_set_size(g_fan_mask, LV_PCT(100), LV_PCT(100));
+    lv_obj_clear_flag(g_fan_mask, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_set_style_bg_opa(g_fan_mask, LV_OPA_0, 0);  // 完全透明
+    
+    // 创建弹出窗口
+    g_fan_popup = lv_obj_create(g_fan_mask);
+    lv_obj_set_size(g_fan_popup, 280, 220);
+    lv_obj_set_style_radius(g_fan_popup, 10, LV_PART_MAIN);
+    lv_obj_set_style_bg_color(g_fan_popup, lv_color_white(), LV_PART_MAIN);
+    lv_obj_set_style_shadow_width(g_fan_popup, 20, LV_PART_MAIN);
+    lv_obj_set_style_shadow_opa(g_fan_popup, LV_OPA_30, LV_PART_MAIN);
+    lv_obj_align(g_fan_popup, LV_ALIGN_CENTER, 0, 0);
+    lv_obj_clear_flag(g_fan_popup, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_add_flag(g_fan_popup, LV_OBJ_FLAG_CLICKABLE);
+
+    // 添加关闭按钮
+    lv_obj_t *btn_close = lv_btn_create(g_fan_popup);
+    lv_obj_set_size(btn_close, 30, 30);
+    lv_obj_align(btn_close, LV_ALIGN_TOP_RIGHT, -5, 5);
+    lv_obj_t *label_close = lv_label_create(btn_close);
+    lv_label_set_text(label_close, LV_SYMBOL_CLOSE);
+    lv_obj_center(label_close);
+    lv_obj_add_event_cb(btn_close, (lv_event_cb_t)close_fan_popup, LV_EVENT_CLICKED, NULL);
+
+    // 添加标题
+    lv_obj_t *label = lv_label_create(g_fan_popup);
+    lv_label_set_text_static(label, "Fan Control");
+    lv_obj_set_style_text_font(label, &font_en_16, LV_STATE_DEFAULT);
+    lv_obj_align(label, LV_ALIGN_TOP_MID, 0, 10);
+
+    // 添加电源开关按钮
+    lv_obj_t *btn_power = lv_btn_create(g_fan_popup);
+    lv_obj_add_flag(btn_power, LV_OBJ_FLAG_CHECKABLE);
+    lv_obj_set_size(btn_power, 160, 40);
+    lv_obj_align(btn_power, LV_ALIGN_TOP_MID, 0, 45);
+    lv_obj_t *label_power = lv_label_create(btn_power);
+    lv_label_set_text_static(label_power, LV_SYMBOL_POWER" Power");
+    lv_obj_center(label_power);
+    lv_obj_add_event_cb(btn_power, fan_power_btn_event_cb, LV_EVENT_VALUE_CHANGED, NULL);
+    if (app_fan_get_state()) {
+        lv_obj_add_state(btn_power, LV_STATE_CHECKED);
+    }
+
+    // 添加滑块
+    lv_obj_t *slider = lv_slider_create(g_fan_popup);
+    lv_obj_set_size(slider, 240, 15);
+    lv_obj_align(slider, LV_ALIGN_TOP_MID, 0, 130);
+    lv_slider_set_range(slider, 0, 100);
+    lv_slider_set_value(slider, app_fan_get_speed(), LV_ANIM_OFF);
+    lv_obj_add_event_cb(slider, fan_slider_event_cb, LV_EVENT_VALUE_CHANGED, NULL);
+
+    // 添加最小/最大标签
+    lv_obj_t *label_min = lv_label_create(g_fan_popup);
+    lv_label_set_text_static(label_min, "0%");
+    lv_obj_align_to(label_min, slider, LV_ALIGN_OUT_BOTTOM_LEFT, 0, 5);
+    
+    lv_obj_t *label_max = lv_label_create(g_fan_popup);
+    lv_label_set_text_static(label_max, "100%");
+    lv_obj_align_to(label_max, slider, LV_ALIGN_OUT_BOTTOM_RIGHT, 0, 5);
+
+    if (ui_get_btn_op_group()) {
+        lv_group_add_obj(ui_get_btn_op_group(), btn_close);
+        lv_group_add_obj(ui_get_btn_op_group(), btn_power);
+        lv_group_add_obj(ui_get_btn_op_group(), slider);
+    }
+
+    // 最后才给遮罩添加点击事件，避免创建过程中触发
+    lv_obj_add_event_cb(g_fan_mask, (lv_event_cb_t)close_fan_popup, LV_EVENT_CLICKED, NULL);
+}
+
 static void ui_dev_ctrl_page_func_click_cb(lv_event_t *e)
 {
     uint32_t i = (uint32_t)lv_event_get_user_data(e);
@@ -73,16 +178,15 @@ static void ui_dev_ctrl_page_func_click_cb(lv_event_t *e)
         bool state = app_switch_get_state();
         app_switch_set_power(!state);
     } else if (UI_DEV_FAN == g_active_dev_type) {
-        bool state = app_fan_get_state();
-        app_fan_set_power(!state);
+        show_fan_speed_popup(lv_scr_act());
     } else {
-        // Other device Not be supported, just update the UI
         ui_dev_ctrl_set_state(g_active_dev_type, !lv_obj_has_state(g_func_btn[g_active_dev_type], LV_STATE_CHECKED));
     }
 }
 
 static void ui_dev_ctrl_page_return_click_cb(lv_event_t *e)
 {
+    close_fan_popup();
     lv_obj_t *obj = lv_event_get_user_data(e);
     if (ui_get_btn_op_group()) {
         lv_group_remove_all_objs(ui_get_btn_op_group());
