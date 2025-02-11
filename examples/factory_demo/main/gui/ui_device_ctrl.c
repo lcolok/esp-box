@@ -65,10 +65,11 @@ void ui_dev_ctrl_set_state(ui_dev_type_t type, bool state)
 
 static void close_fan_popup(void)
 {
-    if (g_fan_popup) {
-        lv_obj_del(g_fan_popup);  // 删除弹窗会自动删除其所有子对象
+    if (g_fan_mask) {
+        // 先删除遮罩（会自动删除其子对象，包括弹窗）
+        lv_obj_del(g_fan_mask);
+        g_fan_mask = NULL;
         g_fan_popup = NULL;
-        g_fan_mask = NULL;  // 弹窗是mask的子对象，所以mask也会被自动删除
     }
 }
 
@@ -98,6 +99,7 @@ static void show_fan_speed_popup(lv_obj_t *parent)
     lv_obj_remove_style_all(g_fan_mask);
     lv_obj_set_size(g_fan_mask, LV_PCT(100), LV_PCT(100));
     lv_obj_clear_flag(g_fan_mask, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_add_flag(g_fan_mask, LV_OBJ_FLAG_CLICKABLE); // 确保遮罩可以接收点击事件
     lv_obj_set_style_bg_opa(g_fan_mask, LV_OPA_0, 0);  // 完全透明
     
     // 创建弹出窗口
