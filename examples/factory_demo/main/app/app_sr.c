@@ -17,6 +17,7 @@
 #include "esp_check.h"
 #include "esp_err.h"
 #include "esp_log.h"
+#include "esp_log_color.h"
 #include "app_sr.h"
 
 #include "esp_mn_speech_commands.h"
@@ -193,7 +194,7 @@ static void audio_detect_task(void *arg)
         }
 
         if (res->wakeup_state == WAKENET_DETECTED) {
-            ESP_LOGI(TAG, LOG_BOLD(LOG_COLOR_GREEN) "wakeword detected");
+            ESP_LOGI(TAG, "%s", "\033[0;32mwakeword detected\033[0m");
             sr_result_t result = {
                 .wakenet_mode = WAKENET_DETECTED,
                 .state = ESP_MN_STATE_DETECTING,
@@ -203,7 +204,7 @@ static void audio_detect_task(void *arg)
         } else if (res->wakeup_state == WAKENET_CHANNEL_VERIFIED) {
             detect_flag = true;
             g_sr_data->afe_handle->disable_wakenet(afe_data);
-            ESP_LOGI(TAG, LOG_BOLD(LOG_COLOR_GREEN) "AFE_FETCH_CHANNEL_VERIFIED, channel index: %d\n", res->trigger_channel_id);
+            ESP_LOGI(TAG, "%s channel index: %d", "\033[0;32mAFE_FETCH_CHANNEL_VERIFIED,\033[0m", res->trigger_channel_id);
         }
 
         if (true == detect_flag) {
