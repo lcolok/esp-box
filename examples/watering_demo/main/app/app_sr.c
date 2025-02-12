@@ -107,7 +107,7 @@ static void audio_detect_task(void *pvParam)
         }
 
         if (res->wakeup_state == WAKENET_DETECTED) {
-            ESP_LOGI(TAG, LOG_BOLD(LOG_COLOR_GREEN) "Wakeword detected");
+            ESP_LOGI(TAG, "Wakeword detected");
             sr_result_t result = {
                 .wakenet_mode = WAKENET_DETECTED,
                 .state = ESP_MN_STATE_DETECTING,
@@ -115,7 +115,7 @@ static void audio_detect_task(void *pvParam)
             };
             xQueueSend(g_result_que, &result, 10);
         } else if (res->wakeup_state == WAKENET_CHANNEL_VERIFIED) {
-            ESP_LOGI(TAG, LOG_BOLD(LOG_COLOR_GREEN) "Channel verified");
+            ESP_LOGI(TAG, "Channel verified");
             detect_flag = true;
             afe_handle->disable_wakenet(afe_data);
         }
@@ -190,7 +190,7 @@ static void audio_detect_task(void *pvParam)
 esp_err_t app_sr_start(bool record_en)
 {
     g_result_que = xQueueCreate(1, sizeof(sr_result_t));
-    ESP_RETURN_ON_FALSE(NULL != g_result_que, ESP_ERR_NO_MEM, TAG, "Failed create result queue");
+    ESP_RETURN_ON_FALSE(NULL != g_result_que, ESP_ERR_NO_MEM, TAG,  "Failed create result queue");
 
     /* Create file if record to SD card enabled*/
     if (record_en) {
