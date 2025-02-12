@@ -5,123 +5,113 @@
  */
 
 
-#include <stdbool.h>
 #include <stdio.h>
-
-#include "freertos/FreeRTOS.h"
-#include <freertos/queue.h>
-#include <freertos/timers.h>
-
-#include "esp_err.h"
 #include "esp_log.h"
 #include "esp_check.h"
-
-#include "driver/gpio.h"
-#if ESP_IDF_VERSION >= ESP_IDF_VERSION_VAL(5, 0, 0)
-#include "soc/soc_caps.h"
 #include "esp_adc/adc_oneshot.h"
 #include "esp_adc/adc_cali.h"
 #include "esp_adc/adc_cali_scheme.h"
-#else
-#include "driver/adc.h"
-#include "esp_adc_cal.h"
-#endif
-
 #include "app_humidity.h"
-
-#define APP_HUMIDITY_MAX_WATCHERS (5)
-#define APP_HUMIDITY_MAX_DEBOUNCE (5)
-
-
-#define DEFAULT_VREF    1100
-#define APP_HUMIDITY_ADC_MAX_INPUT_V (3100)
 
 static const char *TAG = "app_humidity";
 
-typedef struct {
-    app_humidity_cb_t cb;
-    void *args;
-} watcher_t;
+#define DEFAULT_VREF    1100
+#define APP_HUMIDITY_ADC_MAX_INPUT_V 3300
 
-typedef struct {
-    //adc pin
-    gpio_num_t gpio_num;
-    //adc config
-#if ESP_IDF_VERSION >= ESP_IDF_VERSION_VAL(5, 0, 0)
-    adc_channel_t adc_channel;
-    adc_atten_t   adc_atten;
-    adc_bitwidth_t adc_width;
-    adc_cali_handle_t adc1_cali_handle;
-    adc_oneshot_unit_handle_t adc1_handle;
-#else
-    adc_channel_t adc_channel;
-    adc_atten_t   adc_atten;
-    adc_bits_width_t adc_width;
-    esp_adc_cal_characteristics_t *adc_chars;
-#endif
-    //value
-    int humidity;
-    //cb
-    watcher_t watchers[APP_HUMIDITY_MAX_WATCHERS];
-    TaskHandle_t  task_handle;
-} app_humidity_t;
-
-static app_humidity_t _APP_HUMIDITY;
+static app_humidity_t s_humidity = {0};
 
 static app_humidity_t *humidity_ref(void)
 {
-    return &_APP_HUMIDITY;
+    return &s_humidity;
 }
 
 #if ESP_IDF_VERSION >= ESP_IDF_VERSION_VAL(5, 0, 0)
 static esp_err_t adc_calibration_init(app_humidity_t *ref)
 {
-    adc_cali_handle_t handle = NULL;
-    esp_err_t ret = ESP_FAIL;
-    bool calibrated = false;
+    esp_err_t ret = ESP_OK;
+    bool cali_enable = false;
 
-#if ADC_CALI_SCHEME_CURVE_FITTING_SUPPORTED
-    if (!calibrated) {
-        ESP_LOGI(TAG, "calibration scheme version is %s", "Curve Fitting");
+    // 检查校准方案
+    adc_cali_scheme_ver_t scheme_mask;
+    ret = adc_cali_check_scheme(&scheme_mask);
+    if (ret == ESP_OK) {
+        if (scheme_mask & ADC_CALI_SCHEME_VER_CURVE_FITTING) {
+            cali_enable = true;
+            ESP_LOGI(TAG, "Factory calibration supported: Curve Fitting");
+        } else {
+            ESP_LOGW(TAG, "Factory calibration not supported");
+        }
+    } else {
+        ESP_LOGW(TAG, "ADC calibration check failed");
+    }
+
+    if (cali_enable) {
         adc_cali_curve_fitting_config_t cali_config = {
             .unit_id = ADC_UNIT_2,
             .atten = ref->adc_atten,
             .bitwidth = ref->adc_width,
         };
-        ret = adc_cali_create_scheme_curve_fitting(&cali_config, &handle);
-        if (ret == ESP_OK) {
-            calibrated = true;
-        }
-    }
-#endif
-
-#if ADC_CALI_SCHEME_LINE_FITTING_SUPPORTED
-    if (!calibrated) {
-        ESP_LOGI(TAG, "calibration scheme version is %s", "Line Fitting");
-        adc_cali_line_fitting_config_t cali_config = {
-            .unit_id = unit,
-            .atten = ref->adc_atten,
-            .bitwidth = ref->adc_width,
-        };
-        ret = adc_cali_create_scheme_line_fitting(&cali_config, &handle);
-        if (ret == ESP_OK) {
-            calibrated = true;
-        }
-    }
-#endif
-
-    ref->adc1_cali_handle = handle;
-    if (ret == ESP_OK) {
-        ESP_LOGI(TAG, "Calibration Success");
-    } else if (ret == ESP_ERR_NOT_SUPPORTED || !calibrated) {
-        ESP_LOGW(TAG, "eFuse not burnt, skip software calibration");
-    } else {
-        ESP_LOGE(TAG, "Invalid arg or no memory");
+        ESP_ERROR_CHECK(adc_cali_create_scheme_curve_fitting(&cali_config, &ref->adc_cali_handle));
     }
 
-    return calibrated ? ESP_OK : ESP_FAIL;
+    return ret;
 }
 #endif
+
+static int voltage2humidity(int v)
+{
+    int h;
+    float p;
+    int max_h = 100;  // 范围0-100
+    int min_h = 0;
+
+    int max_v = APP_HUMIDITY_ADC_MAX_INPUT_V;
+    int min_v = 1200;
+
+    if (v <= min_v) {
+        h = max_h;
+        p = 1;
+    } else if (v >= max_v) {
+        h = min_h;
+        p = 0;
+    } else {
+        p = 1.0 - 1.0 * (v - min_v) / (max_v - min_v);
+        h = (int)(p * (max_h - min_h));
+    }
+    return h;
+}
+
+static int app_humidity_drive_read_value(app_humidity_t *ref)
+{
+    uint32_t adc_reading = 0;
+#define NO_OF_SAMPLES 32
+#if ESP_IDF_VERSION >= ESP_IDF_VERSION_VAL(5, 0, 0)
+    int adc_raw = 0;
+    for (int i = 0; i < NO_OF_SAMPLES; i++) {
+        ESP_ERROR_CHECK(adc_oneshot_read(ref->adc1_handle, ref->adc_channel, &adc_raw));
+        adc_reading += adc_raw;
+    }
+#else
+    for (int i = 0; i < NO_OF_SAMPLES; i++) {
+        adc_reading += adc1_get_raw(ref->adc_channel);
+    }
+#endif
+    adc_reading /= NO_OF_SAMPLES;
+#undef NO_OF_SAMPLES
+
+    int voltage;
+#if ESP_IDF_VERSION >= ESP_IDF_VERSION_VAL(5, 0, 0)
+    if (ref->adc_cali_handle) {
+        ESP_ERROR_CHECK(adc_cali_raw_to_voltage(ref->adc_cali_handle, adc_reading, &voltage));
+    } else {
+        voltage = adc_reading * APP_HUMIDITY_ADC_MAX_INPUT_V / 4095;
+    }
+#else
+    voltage = adc_reading * APP_HUMIDITY_ADC_MAX_INPUT_V / 4095;
+#endif
+
+    return voltage2humidity(voltage);
+}
 
 static esp_err_t app_humidity_drive_init(app_humidity_t *ref)
 {
@@ -178,53 +168,6 @@ static esp_err_t app_humidity_drive_init(app_humidity_t *ref)
     return ESP_OK;
 }
 
-static int voltage2humidity(int v)
-{
-    int h;
-    float p;
-    int max_h = 84;
-    int min_h = 1;
-
-    int max_v = APP_HUMIDITY_ADC_MAX_INPUT_V;
-    int min_v = 1200;
-
-    /*all these magic numbers come from measurement by hands*/
-    if (v <= min_v) {
-        h = max_h;
-        p = 1;
-    } else if (v >= max_v) {
-        h = min_h;
-        p = 0.01;
-    } else {
-        p = 1.0 - 1.0 * (v - min_v) / (max_v - min_v);
-        h = (int)(p * (max_h - min_h));
-    }
-    //ESP_LOGI(TAG, "v %dmv p %f h %d%%",v,p,h);
-    return h;
-}
-
-static int app_humidity_drive_read_value(app_humidity_t *ref)
-{
-    uint32_t adc_reading = 0;
-#define NO_OF_SAMPLES 64
-#if ESP_IDF_VERSION >= ESP_IDF_VERSION_VAL(5, 0, 0)
-    int adc_raw = 0;
-    for (int i = 0; i < NO_OF_SAMPLES; i++) {
-        adc_oneshot_read(ref->adc1_handle, ref->adc_channel, &adc_raw);
-        adc_reading += adc_raw;
-    }
-#else
-    for (int i = 0; i < NO_OF_SAMPLES; i++) {
-        adc_reading += adc1_get_raw(ref->adc_channel);
-    }
-#endif
-    adc_reading /= NO_OF_SAMPLES;
-#undef NO_OF_SAMPLES
-
-    //return esp_adc_cal_raw_to_voltage(adc_reading, ref->adc_chars);
-    return voltage2humidity(adc_reading * APP_HUMIDITY_ADC_MAX_INPUT_V / 4095);
-}
-
 static void humidity_task(void *pvParam)
 {
     app_humidity_t *ref = pvParam;
@@ -241,37 +184,36 @@ static void humidity_task(void *pvParam)
 #endif
     app_humidity_drive_init(ref);
 
-    //init
-    int debounce_cnt = 0;
-    int cur_humidity = app_humidity_drive_read_value(ref);
+    int cur_value = app_humidity_drive_read_value(ref);
+    ref->humidity = cur_value;      // MQTT通知值
+    ref->display_value = cur_value; // 显示值
     vTaskDelay(pdMS_TO_TICKS(5000));//wait ui
+
+    TickType_t last_notify_time = xTaskGetTickCount();
+    const TickType_t notify_interval = pdMS_TO_TICKS(500);  // MQTT通知间隔增加到500ms
 
     for (;;) {
         int value = app_humidity_drive_read_value(ref);
-        //ESP_LOGI(TAG, "==>h %d%%",value);
-
-        if (value != cur_humidity) {
-            cur_humidity = value;
-            debounce_cnt = 0;
-        } else {
-            debounce_cnt++;
-
-            if (debounce_cnt > APP_HUMIDITY_MAX_DEBOUNCE) {
-                //we got a stable humidity
-                if (cur_humidity != ref->humidity) {
-                    ref->humidity = cur_humidity;
-
-                    for (int i = 0; i < APP_HUMIDITY_MAX_WATCHERS; i++) {
-                        if (ref->watchers[i].cb) {
-                            ref->watchers[i].cb(ref->watchers[i].args);
-                        }
+        
+        // 立即更新显示值
+        ref->display_value = value;
+        
+        // MQTT通知使用节流和平滑处理
+        TickType_t now = xTaskGetTickCount();
+        if ((now - last_notify_time) >= notify_interval) {
+            // 如果变化超过阈值才更新MQTT
+            if (abs(value - ref->humidity) >= 2) {  // 添加阈值判断
+                ref->humidity = value;
+                for (int i = 0; i < APP_HUMIDITY_MAX_WATCHERS; i++) {
+                    if (ref->watchers[i].cb) {
+                        ref->watchers[i].cb(ref->watchers[i].args);
                     }
-                } else {
-                    debounce_cnt = 0;
                 }
             }
+            last_notify_time = now;
         }
-        vTaskDelay(pdMS_TO_TICKS(100));  // Change from 1000ms to 100ms
+        
+        vTaskDelay(pdMS_TO_TICKS(20));  // 显示保持高刷新率
     }
 }
 
@@ -291,10 +233,21 @@ esp_err_t app_humidity_init(void)
     ESP_ERROR_CHECK(ret_val == pdPASS ? ESP_OK : ESP_FAIL);
     return ESP_OK;
 }
+
+// 获取显示值的函数
+int app_humidity_get_display_value(void)
+{
+    app_humidity_t *ref = humidity_ref();
+    return ref->display_value;
+}
+
+// 原有的获取值函数（用于MQTT）保持不变
 int app_humidity_get_value(void)
 {
-    return humidity_ref()->humidity;
+    app_humidity_t *ref = humidity_ref();
+    return ref->humidity;
 }
+
 esp_err_t app_humidity_add_watcher(app_humidity_cb_t cb, void *args)
 {
     app_humidity_t *ref = humidity_ref();

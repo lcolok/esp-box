@@ -17,6 +17,7 @@
 #include "app_rmaker.h"
 #include "app_pump.h"
 #include "app_humidity.h"
+#include "app_potentiometer.h"
 #include "ui_sr.h"
 #include "ui_net_config.h"
 #include "ui_boot_animate.h"
@@ -27,6 +28,8 @@
 static const char *TAG = "ui_main";
 
 LV_FONT_DECLARE(font_en_16)
+LV_FONT_DECLARE(font_montserrat_16)
+LV_FONT_DECLARE(font_montserrat_18)
 
 typedef struct {
     bool need_hint;
@@ -306,6 +309,25 @@ void ui_watering_update_device_name(const char *name)
     lv_label_set_text(g_label_name, name);
 }
 
+static void potentiometer_update_handler(lv_timer_t *timer)
+{
+    lv_obj_t **labels = (lv_obj_t **)timer->user_data;
+    
+    // 使用display_value获取显示值
+    int adc_raw = app_humidity_get_display_value();
+    
+    // 计算电压和电阻
+    float voltage = (float)(adc_raw) * 3.3f / 100.0f;  // 映射到0-3.3V
+    float percentage = (float)adc_raw;  // 已经是0-100%
+    float resistance = (percentage / 100.0f) * 10.0f;  // 映射到0-10kΩ
+    
+    // 更新显示
+    lv_label_set_text_fmt(labels[0], "ADC Raw: %d", adc_raw);
+    lv_label_set_text_fmt(labels[1], "Voltage: %.2fV", voltage);
+    lv_label_set_text_fmt(labels[2], "Position: %d%%", (int)percentage);
+    lv_label_set_text_fmt(labels[3], "Resistance: %.1f kohm", resistance);
+}
+
 static void ui_watering_main(void)
 {
     lv_obj_t *page = lv_obj_create(lv_scr_act());
@@ -334,21 +356,50 @@ static void ui_watering_main(void)
     lv_obj_set_style_line_rounded(line, false, LV_PART_MAIN);
     lv_obj_align(line, LV_ALIGN_LEFT_MID, 0, -40);
 
-    //rh label title
-    lv_obj_t *label_rh_title = lv_label_create(page);
-    lv_obj_set_style_text_font(label_rh_title, &lv_font_montserrat_18, 0);
-    lv_obj_set_style_text_align(label_rh_title, LV_TEXT_ALIGN_CENTER, 0);
-    lv_label_set_text(label_rh_title, "Current RH");
-    lv_obj_align(label_rh_title, LV_ALIGN_LEFT_MID, 0, 10);
+    //potentiometer data title
+    lv_obj_t *label_pot_title = lv_label_create(page);
+    lv_obj_set_style_text_font(label_pot_title, &lv_font_montserrat_18, 0);
+    lv_obj_set_style_text_align(label_pot_title, LV_TEXT_ALIGN_CENTER, 0);
+    lv_label_set_text(label_pot_title, "Potentiometer Data");
+    lv_obj_align(label_pot_title, LV_ALIGN_LEFT_MID, 0, -20);
 
-    //rh label value
-    lv_obj_t *label_rh_value = lv_label_create(page);
-    lv_obj_set_style_text_font(label_rh_value, &lv_font_montserrat_28, 0);
-    lv_obj_set_style_text_align(label_rh_value, LV_TEXT_ALIGN_CENTER, 0);
-    lv_label_set_text(label_rh_value, "   45%");
-    lv_obj_align(label_rh_value, LV_ALIGN_LEFT_MID, 0, 40);
-    lv_obj_add_event_cb(label_rh_value, label_humidity_value_handler, LV_EVENT_VALUE_CHANGED, label_rh_value);
-    app_humidity_add_watcher(label_humidity_event_send, label_rh_value);
+    // ADC Raw Value
+    lv_obj_t *label_adc_raw = lv_label_create(page);
+    lv_obj_set_style_text_font(label_adc_raw, &lv_font_montserrat_18, 0);
+    lv_obj_set_style_text_align(label_adc_raw, LV_TEXT_ALIGN_LEFT, 0);
+    lv_label_set_text(label_adc_raw, "ADC Raw: 0");
+    lv_obj_align(label_adc_raw, LV_ALIGN_LEFT_MID, 0, 10);
+
+    // Voltage
+    lv_obj_t *label_voltage = lv_label_create(page);
+    lv_obj_set_style_text_font(label_voltage, &lv_font_montserrat_18, 0);
+    lv_obj_set_style_text_align(label_voltage, LV_TEXT_ALIGN_LEFT, 0);
+    lv_label_set_text(label_voltage, "Voltage: 0.00V");
+    lv_obj_align(label_voltage, LV_ALIGN_LEFT_MID, 0, 35);
+
+    // Percentage
+    lv_obj_t *label_percentage = lv_label_create(page);
+    lv_obj_set_style_text_font(label_percentage, &lv_font_montserrat_18, 0);
+    lv_obj_set_style_text_align(label_percentage, LV_TEXT_ALIGN_LEFT, 0);
+    lv_label_set_text(label_percentage, "Position: 0%");  
+    lv_obj_align(label_percentage, LV_ALIGN_LEFT_MID, 0, 60);
+
+    // Resistance (estimated)
+    lv_obj_t *label_resistance = lv_label_create(page);
+    lv_obj_set_style_text_font(label_resistance, &lv_font_montserrat_18, 0);
+    lv_obj_set_style_text_align(label_resistance, LV_TEXT_ALIGN_LEFT, 0);
+    lv_label_set_text(label_resistance, "Resistance: 0.0 kohm");  
+    lv_obj_align(label_resistance, LV_ALIGN_LEFT_MID, 0, 85);
+
+    // Update handler
+    static lv_obj_t *labels[4] = {0};
+    labels[0] = label_adc_raw;
+    labels[1] = label_voltage;
+    labels[2] = label_percentage;
+    labels[3] = label_resistance;
+    
+    lv_timer_create(potentiometer_update_handler, 50, labels);  // 从100ms改为50ms
+
     ui_watering_btn(page);
 }
 
