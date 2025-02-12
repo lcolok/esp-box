@@ -25,64 +25,54 @@ static app_humidity_t *humidity_ref(void)
     return &s_humidity;
 }
 
-#if ESP_IDF_VERSION >= ESP_IDF_VERSION_VAL(5, 0, 0)
-static esp_err_t adc_calibration_init(app_humidity_t *ref)
-{
-    esp_err_t ret = ESP_OK;
-    bool cali_enable = false;
+// 添加校准数据结构
+typedef struct {
+    int min_voltage;
+    int max_voltage;
+    bool calibrated;
+} adc_calibration_data_t;
 
-    // 检查校准方案
-    adc_cali_scheme_ver_t scheme_mask;
-    ret = adc_cali_check_scheme(&scheme_mask);
-    if (ret == ESP_OK) {
-        if (scheme_mask & ADC_CALI_SCHEME_VER_CURVE_FITTING) {
-            cali_enable = true;
-            ESP_LOGI(TAG, "Factory calibration supported: Curve Fitting");
-        } else {
-            ESP_LOGW(TAG, "Factory calibration not supported");
-        }
-    } else {
-        ESP_LOGW(TAG, "ADC calibration check failed");
-    }
+// 使用实测的固定校准值
+static const adc_calibration_data_t FACTORY_CAL = {
+    .min_voltage = 0,    // 实测最小电压
+    .max_voltage = 3121, // 实测最大电压
+    .calibrated = true
+};
 
-    if (cali_enable) {
-        adc_cali_curve_fitting_config_t cali_config = {
-            .unit_id = ADC_UNIT_2,
-            .atten = ref->adc_atten,
-            .bitwidth = ref->adc_width,
-        };
-        ESP_ERROR_CHECK(adc_cali_create_scheme_curve_fitting(&cali_config, &ref->adc_cali_handle));
-    }
-
-    return ret;
-}
-#endif
+static adc_calibration_data_t s_cal_data = {
+    .min_voltage = 0,
+    .max_voltage = 3121,
+    .calibrated = true
+};
 
 static int voltage2humidity(int v)
 {
     int h;
     float p;
-    int max_h = 100;  // 最大值保持100%
-    int min_h = 0;    // 最小值为0%
+    int max_h = 100;
+    int min_h = 0;
 
-    // 调整电压范围
-    int max_v = APP_HUMIDITY_ADC_MAX_INPUT_V;  // 3300mV
-    int min_v = 0;    // 从0mV开始，扩大范围
+    // 使用固定的校准范围
+    int voltage_range = FACTORY_CAL.max_voltage;
 
     // 线性映射
-    if (v <= min_v) {
+    if (v <= FACTORY_CAL.min_voltage) {
         h = max_h;
-    } else if (v >= max_v) {
+    } else if (v >= FACTORY_CAL.max_voltage) {
         h = min_h;
     } else {
-        // 反转映射关系（电压越高，湿度越低）
-        p = 1.0 - (float)(v - min_v) / (float)(max_v - min_v);
+        p = 1.0 - (float)v / (float)voltage_range;
         h = (int)(p * (max_h - min_h));
     }
 
     // 确保范围在0-100之间
     if (h > max_h) h = max_h;
     if (h < min_h) h = min_h;
+
+    // 只在达到极值时记录日志
+    if (h == 0 || h == 100) {
+        ESP_LOGI(TAG, "Reached %d%% (voltage: %d mV)", h, v);
+    }
 
     return h;
 }
@@ -103,7 +93,6 @@ static int app_humidity_drive_read_value(app_humidity_t *ref)
     }
 #endif
     adc_reading /= NO_OF_SAMPLES;
-#undef NO_OF_SAMPLES
 
     int voltage;
 #if ESP_IDF_VERSION >= ESP_IDF_VERSION_VAL(5, 0, 0)
@@ -138,10 +127,6 @@ static esp_err_t app_humidity_drive_init(app_humidity_t *ref)
         };
         if (adc_oneshot_config_channel(ref->adc1_handle, ref->adc_channel, &oneshot_config) != ESP_OK) {
             ESP_LOGW(TAG, "adc oneshot config channel fail!");
-        }
-        //-------------ADC2 Calibration Init---------------//
-        if (adc_calibration_init(ref) != ESP_OK) {
-            ESP_LOGW(TAG, "ADC2 Calibration Init False");
         }
     }
 #else
