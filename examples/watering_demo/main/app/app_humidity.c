@@ -62,22 +62,28 @@ static int voltage2humidity(int v)
 {
     int h;
     float p;
-    int max_h = 100;  // 范围0-100
-    int min_h = 0;
+    int max_h = 100;  // 最大值保持100%
+    int min_h = 0;    // 最小值为0%
 
-    int max_v = APP_HUMIDITY_ADC_MAX_INPUT_V;
-    int min_v = 1200;
+    // 调整电压范围
+    int max_v = APP_HUMIDITY_ADC_MAX_INPUT_V;  // 3300mV
+    int min_v = 0;    // 从0mV开始，扩大范围
 
+    // 线性映射
     if (v <= min_v) {
         h = max_h;
-        p = 1;
     } else if (v >= max_v) {
         h = min_h;
-        p = 0;
     } else {
-        p = 1.0 - 1.0 * (v - min_v) / (max_v - min_v);
+        // 反转映射关系（电压越高，湿度越低）
+        p = 1.0 - (float)(v - min_v) / (float)(max_v - min_v);
         h = (int)(p * (max_h - min_h));
     }
+
+    // 确保范围在0-100之间
+    if (h > max_h) h = max_h;
+    if (h < min_h) h = min_h;
+
     return h;
 }
 
