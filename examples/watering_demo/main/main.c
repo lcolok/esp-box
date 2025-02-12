@@ -5,6 +5,7 @@
  */
 
 #include <stdio.h>
+#include <string.h>
 
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
@@ -18,6 +19,7 @@
 #include "app_pump.h"
 #include "app_humidity.h"
 #include "app_rmaker.h"
+#include "app_potentiometer.h"
 
 #include "bsp_board.h"
 #include "bsp/esp-bsp.h"
@@ -80,7 +82,7 @@ void app_main(void)
     ESP_ERROR_CHECK(app_storage_init());
     ESP_ERROR_CHECK(app_pump_init());
     ESP_ERROR_CHECK(app_humidity_init());
-
+    ESP_ERROR_CHECK(app_potentiometer_init());  // 添加电位器初始化
     bsp_i2c_init();
 
     bsp_display_cfg_t cfg = {
