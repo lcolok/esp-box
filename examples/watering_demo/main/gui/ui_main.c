@@ -21,6 +21,7 @@
 #include "ui_sr.h"
 #include "ui_net_config.h"
 #include "ui_boot_animate.h"
+#include "app_sensor_display.h"
 
 #include "bsp_board.h"
 #include "bsp/esp-bsp.h"
@@ -275,6 +276,47 @@ static void ui_watering_btn(lv_obj_t *parent)
     lv_obj_add_event_cb(arc, arc_watering_handler, LV_EVENT_VALUE_CHANGED, g_arc_timer);
 }
 
+static data_processor_t g_processors[4];  // ADC, Voltage, Position, Resistance
+
+static void init_sensor_processors(void)
+{
+    value_config_t configs[4] = {
+        {
+            .scale_factor = 40.95f,  // 0-100 to 0-4095
+            .offset = 0.0f,
+            .decimal_places = 0,
+            .unit = "",
+            .name = "ADC Raw"
+        },
+        {
+            .scale_factor = 0.033f,  // 0-100 to 0-3.3V
+            .offset = 0.0f,
+            .decimal_places = 2,
+            .unit = "V",
+            .name = "Voltage"
+        },
+        {
+            .scale_factor = 1.0f,    // 直接使用百分比
+            .offset = 0.0f,
+            .decimal_places = 1,
+            .unit = "%",
+            .name = "Position"
+        },
+        {
+            .scale_factor = 0.1f,    // 0-100 to 0-10kΩ
+            .offset = 0.0f,
+            .decimal_places = 1,
+            .unit = "kohm",
+            .name = "Resistance"
+        }
+    };
+
+    // 初始化所有处理器
+    for (int i = 0; i < 4; i++) {
+        ESP_ERROR_CHECK(sensor_display_init_processor(&g_processors[i], configs[i]));
+    }
+}
+
 static void label_humidity_event_send(void *data)
 {
     lv_obj_t *label = (lv_obj_t *) data;
@@ -313,23 +355,27 @@ static void potentiometer_update_handler(lv_timer_t *timer)
 {
     lv_obj_t **labels = (lv_obj_t **)timer->user_data;
     
-    // 使用display_value获取显示值
-    int adc_raw = app_humidity_get_display_value();
+    // 获取原始百分比值
+    float raw_percentage = (float)app_humidity_get_display_value();
     
-    // 计算电压和电阻
-    float voltage = (float)(adc_raw) * 3.3f / 100.0f;  // 映射到0-3.3V
-    float percentage = (float)adc_raw;  // 已经是0-100%
-    float resistance = (percentage / 100.0f) * 10.0f;  // 映射到0-10kΩ
-    
-    // 更新显示
-    lv_label_set_text_fmt(labels[0], "ADC Raw: %d", adc_raw);
-    lv_label_set_text_fmt(labels[1], "Voltage: %.2fV", voltage);
-    lv_label_set_text_fmt(labels[2], "Position: %d%%", (int)percentage);
-    lv_label_set_text_fmt(labels[3], "Resistance: %.1f kohm", resistance);
+    // 更新并显示所有值
+    for (int i = 0; i < 4; i++) {
+        float processed_value;
+        char display_text[32];
+        
+        if (sensor_display_update_value(&g_processors[i], raw_percentage, &processed_value) == ESP_OK &&
+            sensor_display_format_value(&g_processors[i], processed_value, display_text, sizeof(display_text)) == ESP_OK) {
+            
+            lv_label_set_text_fmt(labels[i], "%s: %s", g_processors[i].config.name, display_text);
+        }
+    }
 }
 
 static void ui_watering_main(void)
 {
+    // 初始化传感器处理器
+    init_sensor_processors();
+    
     lv_obj_t *page = lv_obj_create(lv_scr_act());
 
     lv_obj_set_size(page, lv_obj_get_width(lv_scr_act()), lv_obj_get_height(lv_scr_act()) - MAIN_UI_STATUS_BAR_H);
