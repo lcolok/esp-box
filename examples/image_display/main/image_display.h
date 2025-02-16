@@ -32,8 +32,8 @@
 #define I2C_EXT_TIMEOUT_MS       1000     // 1 second timeout
 
 /* I2C Device Addresses */
-#define I2C_ADDR_ADC_EXPANDER    0x40    // 8路ADC GPIO扩展板地址
-#define I2C_ADDR_TPL0401A        0x18    // TPL0401A数字电位器地址
+#define I2C_ADDR_ADC_EXPANDER    0x18    // 8路ADC GPIO扩展板地址
+#define I2C_ADDR_TPL0401A        0x40    // TPL0401A数字电位器地址
 
 /* TPL0401A Commands */
 #define TPL0401A_CMD_WRITE       0x00    // 写入电阻值命令

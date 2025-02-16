@@ -14,6 +14,7 @@
 static const char *TAG = "main";
 static lv_obj_t *g_label_adc = NULL;
 static adc_oneshot_unit_handle_t adc2_handle;
+static uint8_t g_current_pot_value = 64;  // 默认设置为中间值
 
 float convert_adc_to_voltage(int adc_value) {
     return (float)adc_value * ADC_REFERENCE_VOLTAGE / ADC_MAX_VALUE;
@@ -52,8 +53,20 @@ static void update_display_timer_cb(void *arg) {
     int adc_value = read_adc_value();
     float voltage = convert_adc_to_voltage(adc_value);
     
-    char buf[32];
-    snprintf(buf, sizeof(buf), "ADC: %d\nVoltage: %.2fV", adc_value, voltage);
+    // 将ADC值（0-4095）映射到数字电位器值（0-127）
+    uint8_t pot_value = (uint8_t)((adc_value * (TPL0401A_MAX_STEPS - 1)) / ADC_MAX_VALUE);
+    
+    // 设置数字电位器的值
+    esp_err_t ret = tpl0401a_set_value(pot_value);
+    if (ret != ESP_OK) {
+        ESP_LOGE(TAG, "Failed to set potentiometer value: %s", esp_err_to_name(ret));
+    }
+    
+    uint16_t resistance = tpl0401a_value_to_resistance(g_current_pot_value);
+    
+    char buf[64];
+    snprintf(buf, sizeof(buf), "ADC: %d\nVoltage: %.2fV\nPot: %dΩ", 
+             adc_value, voltage, resistance);
     ESP_LOGI(TAG, "%s", buf);
     lv_label_set_text(g_label_adc, buf);
 }
@@ -174,7 +187,11 @@ esp_err_t tpl0401a_set_value(uint8_t value)
     }
 
     uint8_t data = value;
-    return i2c_extension_write(I2C_ADDR_TPL0401A, TPL0401A_CMD_WRITE, &data, 1);
+    esp_err_t ret = i2c_extension_write(I2C_ADDR_TPL0401A, TPL0401A_CMD_WRITE, &data, 1);
+    if (ret == ESP_OK) {
+        g_current_pot_value = value;  // 更新当前值
+    }
+    return ret;
 }
 
 uint16_t tpl0401a_value_to_resistance(uint8_t value)
