@@ -7,23 +7,41 @@
 #include <dirent.h>
 #include "bsp/esp-bsp.h"
 #include "esp_log.h"
-#include "esp_adc/adc_oneshot.h"
 #include "esp_timer.h"
+#include "esp_wifi.h"
+#include "image_display.h"
 
 static const char *TAG = "main";
 static lv_obj_t *g_label_adc = NULL;
 static adc_oneshot_unit_handle_t adc2_handle;
-#define ADC_UNIT ADC_UNIT_2
-#define ADC_CHANNEL ADC_CHANNEL_0  // GPIO11 maps to ADC2_CHANNEL_0
-#define NO_OF_SAMPLES 32   // Average over 32 samples
 
-static int read_adc_value(void) {
+float convert_adc_to_voltage(int adc_value) {
+    return (float)adc_value * ADC_REFERENCE_VOLTAGE / ADC_MAX_VALUE;
+}
+
+int read_adc_value(void) {
     int adc_reading = 0;
     int adc_raw = 0;
     
+    // Temporarily disable WiFi if it's active (ADC2 limitation)
+    wifi_mode_t wifi_mode;
+    bool wifi_was_active = false;
+    if (esp_wifi_get_mode(&wifi_mode) == ESP_OK) {
+        wifi_was_active = (wifi_mode != WIFI_MODE_NULL);
+        if (wifi_was_active) {
+            esp_wifi_stop();
+        }
+    }
+    
+    // Read and average multiple samples
     for (int i = 0; i < NO_OF_SAMPLES; i++) {
         ESP_ERROR_CHECK(adc_oneshot_read(adc2_handle, ADC_CHANNEL, &adc_raw));
         adc_reading += adc_raw;
+    }
+    
+    // Restore WiFi if it was active
+    if (wifi_was_active) {
+        esp_wifi_start();
     }
     
     adc_reading /= NO_OF_SAMPLES;
@@ -32,27 +50,24 @@ static int read_adc_value(void) {
 
 static void update_display_timer_cb(void *arg) {
     int adc_value = read_adc_value();
-    float voltage = (float)adc_value * 3.3 / 4095.0;  // Convert to voltage (3.3V reference)
+    float voltage = convert_adc_to_voltage(adc_value);
     
-    // Update label with ADC value and voltage
     char buf[32];
     snprintf(buf, sizeof(buf), "ADC: %d\nVoltage: %.2fV", adc_value, voltage);
-    ESP_LOGI(TAG, "%s", buf);  // Add logging to use TAG
+    ESP_LOGI(TAG, "%s", buf);
     lv_label_set_text(g_label_adc, buf);
 }
 
-static void init_adc(void) {
-    // Initialize ADC
+void init_adc(void) {
     adc_oneshot_unit_init_cfg_t init_config = {
         .unit_id = ADC_UNIT,
         .ulp_mode = ADC_ULP_MODE_DISABLE,
     };
     ESP_ERROR_CHECK(adc_oneshot_new_unit(&init_config, &adc2_handle));
 
-    // Configure ADC channel
     adc_oneshot_chan_cfg_t config = {
         .bitwidth = ADC_BITWIDTH_DEFAULT,
-        .atten = ADC_ATTEN_DB_12,           // Use 12dB attenuation for 0-3.3V range
+        .atten = ADC_ATTEN,
     };
     ESP_ERROR_CHECK(adc_oneshot_config_channel(adc2_handle, ADC_CHANNEL, &config));
 }
@@ -72,8 +87,6 @@ void app_main(void)
         }
     };
     bsp_display_start_with_config(&cfg);
-
-    /* Set display brightness to 100% */
     bsp_display_backlight_on();
 
     /* Initialize ADC */
@@ -82,7 +95,7 @@ void app_main(void)
     /* Create a label for ADC display */
     g_label_adc = lv_label_create(lv_scr_act());
     lv_obj_align(g_label_adc, LV_ALIGN_CENTER, 0, 0);
-    lv_obj_set_style_text_font(g_label_adc, &lv_font_montserrat_14, 0);  // Use available font
+    lv_obj_set_style_text_font(g_label_adc, &lv_font_montserrat_14, 0);
     lv_label_set_text(g_label_adc, "ADC: ---\nVoltage: ---V");
 
     /* Create a timer to update the display */
@@ -92,5 +105,5 @@ void app_main(void)
         .name = "display_update"
     };
     ESP_ERROR_CHECK(esp_timer_create(&timer_args, &timer_handle));
-    ESP_ERROR_CHECK(esp_timer_start_periodic(timer_handle, 100000)); // Update every 100ms
+    ESP_ERROR_CHECK(esp_timer_start_periodic(timer_handle, DISPLAY_UPDATE_INTERVAL_MS * 1000));
 }

@@ -85,7 +85,7 @@ adc_continuous_config(handle, &dig_cfg);
 
 ### 2.4 ADC使用注意事项
 1. GPIO与ADC通道映射
-   - ESP32-S3的GPIO11对应ADC2_CHANNEL_0，不是ADC1
+   - ESP32-S3的GPIO13对应ADC2_CHANNEL_2
    - 使用ADC前需要确认GPIO与ADC单元和通道的对应关系
    - 可以通过ESP-IDF的头文件或技术规格书查询对应关系
 

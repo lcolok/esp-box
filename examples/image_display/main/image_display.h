@@ -6,25 +6,22 @@
 
 #pragma once
 
-/** Major version number (X.x.x) */
-#define IMAGE_DISPLAY_VERSION_MAJOR 0
-/** Minor version number (x.X.x) */
-#define IMAGE_DISPLAY_VERSION_MINOR 0
-/** Patch version number (x.x.X) */
-#define IMAGE_DISPLAY_VERSION_PATCH 1
+#include "esp_adc/adc_oneshot.h"
 
-/**
- * Macro to convert version number into an integer
- *
- * To be used in comparisons, such as IMAGE_DISPLAY_VERSION >= IMAGE_DISPLAY_VERSION_VAL(4, 0, 0)
- */
-#define IMAGE_DISPLAY_VERSION_VAL(major, minor, patch) ((major << 16) | (minor << 8) | (patch))
+/* ADC Configuration */
+#define ADC_UNIT ADC_UNIT_2
+#define ADC_CHANNEL ADC_CHANNEL_3  // ADC2_CH3 on GPIO14
+#define NO_OF_SAMPLES 32   // Average over 32 samples
 
-/**
- * Current version, as an integer
- *
- * To be used in comparisons, such as IMAGE_DISPLAY_VERSION >= IMAGE_DISPLAY_VERSION_VAL(4, 0, 0)
- */
-#define IMAGE_DISPLAY_VERSION IMAGE_DISPLAY_VERSION_VAL(IMAGE_DISPLAY_VERSION_MAJOR, \
-                                              IMAGE_DISPLAY_VERSION_MINOR, \
-                                              IMAGE_DISPLAY_VERSION_PATCH)
+/* Display Update Configuration */
+#define DISPLAY_UPDATE_INTERVAL_MS 100  // Display update interval in milliseconds
+
+/* ADC Conversion Parameters */
+#define ADC_REFERENCE_VOLTAGE 3.3f  // Reference voltage in volts
+#define ADC_MAX_VALUE 4095         // 12-bit ADC maximum value
+#define ADC_ATTEN ADC_ATTEN_DB_12  // 12dB attenuation for 0-3.6V range
+
+/* Function Declarations */
+void init_adc(void);
+int read_adc_value(void);
+float convert_adc_to_voltage(int adc_value);
