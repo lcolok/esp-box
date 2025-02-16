@@ -5,15 +5,57 @@
  */
 
 #include <dirent.h>
-
 #include "bsp/esp-bsp.h"
 #include "esp_log.h"
+#include "esp_adc/adc_oneshot.h"
+#include "esp_timer.h"
 
 static const char *TAG = "main";
+static lv_obj_t *g_label_adc = NULL;
+static adc_oneshot_unit_handle_t adc2_handle;
+#define ADC_UNIT ADC_UNIT_2
+#define ADC_CHANNEL ADC_CHANNEL_0  // GPIO11 maps to ADC2_CHANNEL_0
+#define NO_OF_SAMPLES 32   // Average over 32 samples
 
-static lv_group_t *g_btn_op_group = NULL;
+static int read_adc_value(void) {
+    int adc_reading = 0;
+    int adc_raw = 0;
+    
+    for (int i = 0; i < NO_OF_SAMPLES; i++) {
+        ESP_ERROR_CHECK(adc_oneshot_read(adc2_handle, ADC_CHANNEL, &adc_raw));
+        adc_reading += adc_raw;
+    }
+    
+    adc_reading /= NO_OF_SAMPLES;
+    return adc_reading;
+}
 
-static void image_display(void);
+static void update_display_timer_cb(void *arg) {
+    int adc_value = read_adc_value();
+    float voltage = (float)adc_value * 3.3 / 4095.0;  // Convert to voltage (3.3V reference)
+    
+    // Update label with ADC value and voltage
+    char buf[32];
+    snprintf(buf, sizeof(buf), "ADC: %d\nVoltage: %.2fV", adc_value, voltage);
+    ESP_LOGI(TAG, "%s", buf);  // Add logging to use TAG
+    lv_label_set_text(g_label_adc, buf);
+}
+
+static void init_adc(void) {
+    // Initialize ADC
+    adc_oneshot_unit_init_cfg_t init_config = {
+        .unit_id = ADC_UNIT,
+        .ulp_mode = ADC_ULP_MODE_DISABLE,
+    };
+    ESP_ERROR_CHECK(adc_oneshot_new_unit(&init_config, &adc2_handle));
+
+    // Configure ADC channel
+    adc_oneshot_chan_cfg_t config = {
+        .bitwidth = ADC_BITWIDTH_DEFAULT,
+        .atten = ADC_ATTEN_DB_12,           // Use 12dB attenuation for 0-3.3V range
+    };
+    ESP_ERROR_CHECK(adc_oneshot_config_channel(adc2_handle, ADC_CHANNEL, &config));
+}
 
 void app_main(void)
 {
@@ -34,69 +76,21 @@ void app_main(void)
     /* Set display brightness to 100% */
     bsp_display_backlight_on();
 
-    /* Mount SPIFFS */
-    bsp_spiffs_mount();
+    /* Initialize ADC */
+    init_adc();
 
-    image_display();
-}
+    /* Create a label for ADC display */
+    g_label_adc = lv_label_create(lv_scr_act());
+    lv_obj_align(g_label_adc, LV_ALIGN_CENTER, 0, 0);
+    lv_obj_set_style_text_font(g_label_adc, &lv_font_montserrat_14, 0);  // Use available font
+    lv_label_set_text(g_label_adc, "ADC: ---\nVoltage: ---V");
 
-static void btn_event_cb(lv_event_t *event)
-{
-    lv_obj_t *img = (lv_obj_t *) event->user_data;
-    const char *file_name = lv_list_get_btn_text(lv_obj_get_parent(event->target), event->target);
-    char *file_name_with_path = (char *) heap_caps_malloc(256, MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
-
-    if (NULL != file_name_with_path) {
-        /* Get full file name with mount point and folder path */
-        strcpy(file_name_with_path, "S:/spiffs/");
-        strcat(file_name_with_path, file_name);
-
-        /* Set src of image with file name */
-        lv_img_set_src(img, file_name_with_path);
-
-        /* Align object */
-        lv_obj_align(img, LV_ALIGN_CENTER, 80, 0);
-
-        /* Only for debug */
-        ESP_LOGI(TAG, "Display image file : %s", file_name_with_path);
-
-        /* Don't forget to free allocated memory */
-        free(file_name_with_path);
-    }
-}
-
-static void image_display(void)
-{
-    lv_indev_t *indev = lv_indev_get_next(NULL);
-
-    if ((lv_indev_get_type(indev) == LV_INDEV_TYPE_KEYPAD) || \
-            lv_indev_get_type(indev) == LV_INDEV_TYPE_ENCODER) {
-        ESP_LOGI(TAG, "Input device type is keypad");
-        g_btn_op_group = lv_group_create();
-        lv_indev_set_group(indev, g_btn_op_group);
-    }
-
-    lv_obj_t *list = lv_list_create(lv_scr_act());
-    lv_obj_set_size(list, 170, 220);
-    lv_obj_set_style_border_width(list, 0, LV_STATE_DEFAULT);
-    lv_obj_align(list, LV_ALIGN_LEFT_MID, -15, 0);
-
-    lv_obj_t *img = lv_img_create(lv_scr_act());
-
-    /* Get file name in storage */
-    struct dirent *p_dirent = NULL;
-    DIR *p_dir_stream = opendir("/spiffs");
-
-    /* Scan files in storage */
-    while (true) {
-        p_dirent = readdir(p_dir_stream);
-        if (NULL != p_dirent) {
-            lv_obj_t *btn = lv_list_add_btn(list, LV_SYMBOL_IMAGE, p_dirent->d_name);
-            lv_group_add_obj(g_btn_op_group, btn);
-            lv_obj_add_event_cb(btn, btn_event_cb, LV_EVENT_CLICKED, (void *) img);
-        } else {
-            closedir(p_dir_stream);
-            break;
-        }
-    }
+    /* Create a timer to update the display */
+    esp_timer_handle_t timer_handle;
+    esp_timer_create_args_t timer_args = {
+        .callback = update_display_timer_cb,
+        .name = "display_update"
+    };
+    ESP_ERROR_CHECK(esp_timer_create(&timer_args, &timer_handle));
+    ESP_ERROR_CHECK(esp_timer_start_periodic(timer_handle, 100000)); // Update every 100ms
 }
