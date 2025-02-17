@@ -65,7 +65,7 @@ static void update_display_timer_cb(void *arg) {
     uint16_t resistance = tpl0401a_value_to_resistance(g_current_pot_value);
     
     char buf[64];
-    snprintf(buf, sizeof(buf), "ADC: %d\nVoltage: %.2fV\nPot: %dΩ", 
+    snprintf(buf, sizeof(buf), "ADC: %d\nVoltage: %.2fV\nPot: %d ohms", 
              adc_value, voltage, resistance);
     ESP_LOGI(TAG, "%s", buf);
     lv_label_set_text(g_label_adc, buf);
@@ -197,8 +197,8 @@ esp_err_t tpl0401a_set_value(uint8_t value)
 uint16_t tpl0401a_value_to_resistance(uint8_t value)
 {
     // TPL0401A是10K电阻，128档位
-    // 当value=0时，电阻为0Ω
-    // 当value=127时，电阻为10KΩ
+    // 当value=0时，电阻为0 ohms
+    // 当value=127时，电阻为10K ohms
     return (uint16_t)((uint32_t)value * 10000 / (TPL0401A_MAX_STEPS - 1));
 }
 
@@ -269,21 +269,21 @@ void test_devices(void)
     // 测试数字电位器
     ESP_LOGI(TAG, "Testing TPL0401A digital potentiometer...");
     
-    // 测试最小值（0Ω）
+    // 测试最小值（0 ohms）
     ret = tpl0401a_set_value(0);
     if (ret == ESP_OK) {
         ESP_LOGI(TAG, "TPL0401A set to minimum: %d ohms", tpl0401a_value_to_resistance(0));
     }
     vTaskDelay(pdMS_TO_TICKS(100));
     
-    // 测试中间值（约5KΩ）
+    // 测试中间值（约5K ohms）
     ret = tpl0401a_set_value(64);
     if (ret == ESP_OK) {
         ESP_LOGI(TAG, "TPL0401A set to middle: %d ohms", tpl0401a_value_to_resistance(64));
     }
     vTaskDelay(pdMS_TO_TICKS(100));
     
-    // 测试最大值（10KΩ）
+    // 测试最大值（10K ohms）
     ret = tpl0401a_set_value(127);
     if (ret == ESP_OK) {
         ESP_LOGI(TAG, "TPL0401A set to maximum: %d ohms", tpl0401a_value_to_resistance(127));
