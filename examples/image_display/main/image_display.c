@@ -85,25 +85,27 @@ void init_adc(void) {
     ESP_ERROR_CHECK(adc_oneshot_config_channel(adc2_handle, ADC_CHANNEL, &config));
 }
 
+static i2c_config_t i2c_conf;
+
 /* I2C Extension Implementation */
 esp_err_t init_i2c_extension(void)
 {
-    i2c_config_t conf = {
-        .mode = I2C_MODE_MASTER,
-        .sda_io_num = I2C_EXT_SDA_IO,
-        .scl_io_num = I2C_EXT_SCL_IO,
-        .sda_pullup_en = GPIO_PULLUP_ENABLE,  // 启用内部上拉
-        .scl_pullup_en = GPIO_PULLUP_ENABLE,  // 启用内部上拉
-        .master.clk_speed = I2C_EXT_FREQ_HZ,
-    };
+    // 配置I2C总线
+    i2c_conf.mode = I2C_MODE_MASTER;
+    i2c_conf.sda_io_num = I2C_EXT_SDA_IO;
+    i2c_conf.scl_io_num = I2C_EXT_SCL_IO;
+    i2c_conf.sda_pullup_en = GPIO_PULLUP_ENABLE;
+    i2c_conf.scl_pullup_en = GPIO_PULLUP_ENABLE;
+    i2c_conf.master.clk_speed = I2C_EXT_FREQ_HZ;
+    i2c_conf.clk_flags = 0;
 
-    esp_err_t err = i2c_param_config(I2C_EXT_PORT, &conf);
+    esp_err_t err = i2c_param_config(I2C_EXT_PORT, &i2c_conf);
     if (err != ESP_OK) {
         ESP_LOGE(TAG, "I2C parameter configuration failed: %s", esp_err_to_name(err));
         return err;
     }
 
-    err = i2c_driver_install(I2C_EXT_PORT, conf.mode, 0, 0, 0);
+    err = i2c_driver_install(I2C_EXT_PORT, i2c_conf.mode, 0, 0, 0);
     if (err != ESP_OK) {
         ESP_LOGE(TAG, "I2C driver installation failed: %s", esp_err_to_name(err));
         return err;
@@ -111,27 +113,6 @@ esp_err_t init_i2c_extension(void)
 
     ESP_LOGI(TAG, "I2C extension initialized on port %d (SDA: %d, SCL: %d)", 
              I2C_EXT_PORT, I2C_EXT_SDA_IO, I2C_EXT_SCL_IO);
-    
-    return ESP_OK;
-}
-
-esp_err_t i2c_extension_scan(void)
-{
-    ESP_LOGI(TAG, "Scanning I2C bus for devices...");
-    
-    for (uint8_t i = 1; i < 127; i++) {
-        i2c_cmd_handle_t cmd = i2c_cmd_link_create();
-        i2c_master_start(cmd);
-        i2c_master_write_byte(cmd, (i << 1) | I2C_MASTER_WRITE, true);
-        i2c_master_stop(cmd);
-        
-        esp_err_t ret = i2c_master_cmd_begin(BSP_I2C_NUM, cmd, pdMS_TO_TICKS(1000));
-        i2c_cmd_link_delete(cmd);
-        
-        if (ret == ESP_OK) {
-            ESP_LOGI(TAG, "Found I2C device at address 0x%02X", i);
-        }
-    }
     
     return ESP_OK;
 }
@@ -154,7 +135,7 @@ esp_err_t i2c_extension_read(uint8_t addr, uint8_t reg, uint8_t *data, size_t le
     i2c_master_read_byte(cmd, data + len - 1, I2C_MASTER_NACK);
     i2c_master_stop(cmd);
     
-    esp_err_t ret = i2c_master_cmd_begin(BSP_I2C_NUM, cmd, pdMS_TO_TICKS(1000));
+    esp_err_t ret = i2c_master_cmd_begin(I2C_EXT_PORT, cmd, pdMS_TO_TICKS(I2C_EXT_TIMEOUT_MS));
     i2c_cmd_link_delete(cmd);
     
     return ret;
@@ -173,10 +154,31 @@ esp_err_t i2c_extension_write(uint8_t addr, uint8_t reg, uint8_t *data, size_t l
     i2c_master_write(cmd, data, len, true);
     i2c_master_stop(cmd);
     
-    esp_err_t ret = i2c_master_cmd_begin(BSP_I2C_NUM, cmd, pdMS_TO_TICKS(1000));
+    esp_err_t ret = i2c_master_cmd_begin(I2C_EXT_PORT, cmd, pdMS_TO_TICKS(I2C_EXT_TIMEOUT_MS));
     i2c_cmd_link_delete(cmd);
     
     return ret;
+}
+
+esp_err_t i2c_extension_scan(void)
+{
+    ESP_LOGI(TAG, "Scanning I2C bus for devices...");
+    
+    for (uint8_t i = 1; i < 127; i++) {
+        i2c_cmd_handle_t cmd = i2c_cmd_link_create();
+        i2c_master_start(cmd);
+        i2c_master_write_byte(cmd, (i << 1) | I2C_MASTER_WRITE, true);
+        i2c_master_stop(cmd);
+        
+        esp_err_t ret = i2c_master_cmd_begin(I2C_EXT_PORT, cmd, pdMS_TO_TICKS(I2C_EXT_TIMEOUT_MS));
+        i2c_cmd_link_delete(cmd);
+        
+        if (ret == ESP_OK) {
+            ESP_LOGI(TAG, "Found I2C device at address 0x%02X", i);
+        }
+    }
+    
+    return ESP_OK;
 }
 
 /* TPL0401A Digital Potentiometer Implementation */

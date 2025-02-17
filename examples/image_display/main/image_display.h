@@ -7,7 +7,7 @@
 #pragma once
 
 #include "esp_adc/adc_oneshot.h"
-#include "driver/i2c.h"
+#include "driver/i2c_master.h"
 #include "driver/gpio.h"
 
 /* ADC Configuration */
